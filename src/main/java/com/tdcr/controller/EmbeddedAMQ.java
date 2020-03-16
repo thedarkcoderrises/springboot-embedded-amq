@@ -1,5 +1,7 @@
 package com.tdcr.controller;
 
+import org.apache.activemq.broker.jmx.BrokerViewMBean;
+import org.apache.activemq.broker.jmx.QueueViewMBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.core.JmsTemplate;
@@ -13,6 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.annotation.PostConstruct;
 import javax.jms.Session;
+import javax.management.MBeanServerConnection;
+import javax.management.MBeanServerInvocationHandler;
+import javax.management.ObjectName;
 
 @RestController
 public class EmbeddedAMQ {
@@ -20,6 +25,8 @@ public class EmbeddedAMQ {
     @Autowired
     private JmsTemplate jmsTemplate;
 
+    @Autowired
+    private MBeanServerConnection amqConnection;
 
     @PostConstruct()
     void initEvent(){
@@ -27,7 +34,7 @@ public class EmbeddedAMQ {
             @Override
             public void run() {
                 try {
-                    Thread.sleep(10000);
+                    Thread.sleep(10000); // broker initialize time
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -59,6 +66,40 @@ public class EmbeddedAMQ {
         System.out.println("message: " + message);
         System.out.println("session: " + session);
         System.out.println("- - - - - - - - - - - - - - - - - - - - - - - -");
+    }
+
+    @JmsListener(destination = "destroy")
+    public void noteConsumer(@Payload String queueName){
+
+        String scheduleQueue = queueName.split("_")[0];
+        String reminderQueue = queueName.split("_")[1];
+
+        try{
+            ObjectName activeMQ = new ObjectName("org.apache.activemq:type=Broker,brokerName=embedded");
+            BrokerViewMBean mbean = (BrokerViewMBean) MBeanServerInvocationHandler.newProxyInstance(amqConnection,
+                    activeMQ, BrokerViewMBean.class, true);
+
+            for (ObjectName name : mbean.getQueues()) {
+                QueueViewMBean queueMbean = (QueueViewMBean)
+                        MBeanServerInvocationHandler.newProxyInstance(amqConnection, name,
+                                QueueViewMBean.class, true);
+
+
+                if(reminderQueue.equals(queueMbean.getName()) && queueMbean.getConsumerCount() == 0){
+                    Thread.sleep(3000);
+                        queueMbean.purge();
+                }
+
+                if(scheduleQueue.equals(queueMbean.getName()) && queueMbean.getConsumerCount() == 0){
+                    jmsTemplate.convertAndSend(scheduleQueue,"test");
+                    System.out.println("Scheduled after complete destroy");
+                }
+            }
+
+        }catch (Exception e){
+
+        }
+
     }
 
 }
